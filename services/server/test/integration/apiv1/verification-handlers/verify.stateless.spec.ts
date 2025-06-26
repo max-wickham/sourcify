@@ -521,6 +521,69 @@ describe("/", function () {
       );
   });
 
+  it("should allow partial match reverification when throwIfAlreadyVerified is disabled", async () => {
+    // Temporarily disable throwIfAlreadyVerified
+    const originalStorageService = serverFixture.server.services.storage;
+    serverFixture.server.services.storage.throwIfAlreadyVerified = false;
+
+    try {
+      const partialMetadata = (
+        await import("../../../testcontracts/Storage/metadataModified.json")
+      ).default;
+      const partialMetadataBuffer = Buffer.from(
+        JSON.stringify(partialMetadata),
+      );
+
+      const partialSourcePath = path.join(
+        __dirname,
+        "..",
+        "..",
+        "..",
+        "testcontracts",
+        "Storage",
+        "StorageModified.sol",
+      );
+      const partialSourceBuffer = fs.readFileSync(partialSourcePath);
+
+      // First verification - should create a partial match
+      let res = await chai
+        .request(serverFixture.server.app)
+        .post("/")
+        .field("address", chainFixture.defaultContractAddress)
+        .field("chain", chainFixture.chainId)
+        .attach("files", partialMetadataBuffer, "metadata.json")
+        .attach("files", partialSourceBuffer);
+
+      await assertVerification(
+        serverFixture,
+        null,
+        res,
+        null,
+        chainFixture.defaultContractAddress,
+        chainFixture.chainId,
+        "partial",
+      );
+
+      // Second verification with same partial data - should succeed instead of throwing conflict
+      res = await chai
+        .request(serverFixture.server.app)
+        .post("/")
+        .field("address", chainFixture.defaultContractAddress)
+        .field("chain", chainFixture.chainId)
+        .attach("files", partialMetadataBuffer, "metadata.json")
+        .attach("files", partialSourceBuffer);
+
+      // Should return 200 OK instead of 409 Conflict
+      chai.expect(res.status).to.equal(StatusCodes.OK);
+      chai.expect(res.body.result).to.have.lengthOf(1);
+      chai.expect(res.body.result[0].status).to.equal("partial");
+    } finally {
+      // Restore original value
+      serverFixture.server.services.storage.throwIfAlreadyVerified =
+        originalStorageService.throwIfAlreadyVerified;
+    }
+  });
+
   it("should mark contracts without an embedded metadata hash as a 'partial' match", async () => {
     // Simple contract without bytecode at https://goerli.etherscan.io/address/0x093203902B71Cdb1dAA83153b3Df284CD1a2f88d
     const bytecode =

@@ -196,8 +196,10 @@ export async function checkIfAlreadyVerified(
   res: Response,
   next: NextFunction,
 ) {
-  const throwIfAlreadyVerified = req.app.get("chainRepository") as boolean;
-  if (!throwIfAlreadyVerified) {
+  const throwIfAlreadyVerified = req.app.get(
+    "throwIfAlreadyVerified",
+  ) as boolean;
+  if (throwIfAlreadyVerified) {
     const { address, chainId } = req.params;
     const services = req.app.get("services") as Services;
     const contract = await services.storage.performServiceOperation(

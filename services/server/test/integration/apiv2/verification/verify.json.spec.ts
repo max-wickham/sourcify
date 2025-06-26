@@ -327,6 +327,79 @@ describe("POST /v2/verify/:chainId/:address", function () {
     );
   });
 
+  it("should allow reverification when throwIfAlreadyVerified is disabled", async () => {
+    // First, verify the contract normally
+    const { resolveWorkers: resolveWorkers1 } = makeWorkersWait();
+
+    const verifyRes1 = await chai
+      .request(serverFixture.server.app)
+      .post(
+        `/v2/verify/${chainFixture.chainId}/${chainFixture.defaultContractAddress}`,
+      )
+      .send({
+        stdJsonInput: chainFixture.defaultContractJsonInput,
+        compilerVersion:
+          chainFixture.defaultContractMetadataObject.compiler.version,
+        contractIdentifier: Object.entries(
+          chainFixture.defaultContractMetadataObject.settings.compilationTarget,
+        )[0].join(":"),
+        creationTransactionHash: chainFixture.defaultContractCreatorTx,
+      });
+
+    await assertJobVerification(
+      serverFixture,
+      verifyRes1,
+      resolveWorkers1,
+      chainFixture.chainId,
+      chainFixture.defaultContractAddress,
+      "exact_match",
+    );
+
+    // Temporarily disable throwIfAlreadyVerified
+    const originalValue = serverFixture.server.app.get("throwIfAlreadyVerified");
+    serverFixture.server.app.set("throwIfAlreadyVerified", false);
+
+    try {
+      // Second verification should now succeed (202) instead of throwing 409
+      const { resolveWorkers: resolveWorkers2 } = makeWorkersWait();
+
+      const verifyRes2 = await chai
+        .request(serverFixture.server.app)
+        .post(
+          `/v2/verify/${chainFixture.chainId}/${chainFixture.defaultContractAddress}`,
+        )
+        .send({
+          stdJsonInput: chainFixture.defaultContractJsonInput,
+          compilerVersion:
+            chainFixture.defaultContractMetadataObject.compiler.version,
+          contractIdentifier: Object.entries(
+            chainFixture.defaultContractMetadataObject.settings.compilationTarget,
+          )[0].join(":"),
+          creationTransactionHash: chainFixture.defaultContractCreatorTx,
+        });
+
+      chai.expect(verifyRes2.status).to.equal(202);
+      chai.expect(verifyRes2.body).to.have.property("verificationId");
+
+      await resolveWorkers2();
+
+      // Fetch the job result - it should complete successfully
+      const jobRes = await chai
+        .request(serverFixture.server.app)
+        .get(`/v2/verify/${verifyRes2.body.verificationId}`);
+
+      chai.expect(jobRes.status).to.equal(200);
+      chai.expect(jobRes.body).to.include({
+        isJobCompleted: true,
+      });
+      chai.expect(jobRes.body.error).to.not.exist;
+      chai.expect(jobRes.body.contract.match).to.equal("exact_match");
+    } finally {
+      // Restore original value
+      serverFixture.server.app.set("throwIfAlreadyVerified", originalValue);
+    }
+  });
+
   it("should return a 400 if the standard json input misses the language", async () => {
     const jsonInput = JSON.parse(
       JSON.stringify(chainFixture.defaultContractJsonInput),
